@@ -1,0 +1,438 @@
+---
+title: "Cleaning and exploratory analysis"
+author: "Juan Berrios"
+date: "6/30/2022"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  html_notebook:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, echo=F}
+knitr::opts_chunk$set(include=TRUE, echo=TRUE, comment=NA)
+```
+
+```{css, echo=F}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+```
+
+# Introduction
+
+- The following is code written for an analysis of diminutive formation in L2 Spanish. The data come from [Corpus Escrito del Español como L2 (CEDEL2)](http://cedel2.learnercorpora.com/). It follows a first notebook concentrated on locating and tagging tokens for later analyses, and a cleaning notebook to removed unneeded tokens and fix inaccurate tags. 
+
+# Preparation
+
+- Loading libraries:
+
+```{r message=FALSE,warning=FALSE}
+library(tidyverse)
+library(magrittr)
+library(lme4)
+```
+
+- Loading data:
+
+```{r}
+#Note that files are tab separated.
+
+read.csv("./data/diminutives_analysis.csv",fileEncoding = "UTF-8-BOM") -> df
+read.csv("./data/texts_processed.csv") -> texts
+read.csv("./data/texts.csv",sep='\t') -> texts_original_L2
+read.csv("./data/native/texts.csv",sep='\t') -> texts_original_native
+```
+
+- Checking that everything was loaded properly for diminutives data frame:
+
+```{r}
+df %>%
+  colnames()
+```
+```{r}
+df %>%
+  head()
+```
+
+- Likewise for texts dataframe:
+
+```{r}
+texts %>%
+  colnames()
+```
+
+```{r}
+texts %>%
+  dim()
+```
+
+- And lastly for the original texts, which we'll merge first:
+
+```{r}
+texts_original_L2 <- texts_original_L2 %>%
+  select(Subcorpus,Filename,L1,Task.title,Text)
+
+texts_original_native <- texts_original_native  %>%
+  select(Subcorpus,Filename,L1,Task.title,Text)
+
+texts_original <- texts_original_L2 %>%
+                    full_join(texts_original_native)
+
+#Save memory
+rm(texts_original_L2)
+rm(texts_original_native)
+```
+
+- Checking:
+
+```{r}
+texts_original %>%
+  colnames()
+```
+
+```{r}
+texts_original %>%
+  dim()
+```
+- Removing L2s (keeping English, German, Portuguese, Italian, Russian, Spanish) and tasks (keeping only narratives) that we will not consider.
+
+```{r}
+L1s = c("English","German","Portuguese","Italian","Russian","Spanish")
+tasks = c("3. Film","4. Last year holidays","6. Recent trip","7. An experience", "13. Frog","14. Chaplin")
+```
+
+```{r}
+df <- df %>% 
+  filter(Task.title %in% tasks & L1 %in% L1s)
+```
+
+```{r}
+texts <- texts %>% 
+  filter(Task.title %in% tasks & L1 %in% L1s)
+```
+
+```{r}
+texts_original <- texts_original %>% 
+  filter(Task.title %in% tasks & L1 %in% L1s)
+```
+
+- Adding a column for accuracy in L2 dataset:
+
+
+```{r}
+df <- df %>% 
+  mutate(Accuracy = case_when(Token.corrected == Token.checked ~ "Accurate",
+                        Token.corrected != Token.checked  ~ "Innacurate"))
+```
+
+# Exploring
+
+```{r}
+print("There are this many tokens as of now:")
+dim(df)[1]
+print("There are this many types as of now:")
+length(unique(df$Token.corrected))
+print("There are this many types (spellecheked) as of now:")
+length(unique(df$Token.checked))
+print("There are this many lemmas as of now:")
+length(unique(df$Lemma.corrected))
+print("There are this many unique essays which tokens appear in:")
+length(unique(df$Filename))
+```
+
+
+```{r}
+print("There are this many tokens by diminutive used:")
+count(df, Diminutive)
+```
+
+
+# Brief frequency analysis
+
+- To begin examining pattern, we can do a brief frequency analysis:
+
+```{r warning=FALSE}
+#Loading stop words
+
+tibble(Token = quanteda::stopwords("es"),Lexicon = "custom") -> stop_words
+```
+
+- For all tokens accross the data set:
+
+```{r}
+#Simple frequency distribution for tokens
+
+texts %>%
+  filter(POS != 'SPACE' & POS != 'PUNCT') %>% #remove punctuation
+  anti_join(stop_words %>% filter(Lexicon=="custom")) %>% #remove stop words
+  count(Token, sort = TRUE) %>%
+  head(25) #Top 25
+```
+
+- For the diminutive subset only:
+
+```{r}
+#Simple frequency distribution for tokens
+
+df %>%
+  count(Token, sort = TRUE) %>%
+  head(25) #Top 25
+```
+
+- Plotting:
+
+```{r echo=FALSE}
+
+#Function to set size 
+
+psize <- function(width_choice, height_choice) {
+        options(repr.plot.width=width_choice, repr.plot.height=height_choice)
+        }
+```
+
+- All tokens:
+
+```{r echo=FALSE}
+psize(12, 8)
+
+texts %>%
+  filter(POS != 'SPACE' & POS != 'PUNCT') %>% #remove punctuation
+  anti_join(stop_words %>% filter(Lexicon=="custom")) %>% #remove stop words
+  count(Token, sort = TRUE) %>%
+  head(25) %>%
+  mutate(Token = reorder(Token, n)) %>%
+  ggplot(aes(n, Token, fill=Token)) +
+  geom_col(color="black") +
+  labs(title="Frequency Distribution of Tokens",x='Counts',y = NULL,fill='Token') +
+  theme_classic()+
+  theme(text = element_text(size=20))
+
+ggsave("figures/frequency_distribution.png",width = 12, height = 8,dpi=300)
+```
+
+- Diminutives only:
+
+```{r echo=FALSE}
+psize(12, 8)
+
+df %>%
+    count(Token, sort = TRUE) %>%
+    head(25) %>%
+    mutate(Token = reorder(Token, n)) %>%
+    ggplot(aes(n, Token, fill=Token)) +
+    geom_col(color="black") +
+    labs(title="Frequency Distribution of Tokens",x='Counts',y = NULL,fill='Token') +
+    theme_classic()+
+    theme(text = element_text(size=20))
+
+ggsave("figures/frequency_distribution_diminutives.png",width = 12, height = 8,dpi=300)
+```
+
+- Cross linguistic analyses:
+
+```{r}
+df %>%
+    count(L1, sort = TRUE) %>%
+    mutate(L1 = reorder(L1, n)) %>%
+    ggplot(aes(n, L1, fill=L1)) +
+    geom_col(color="black") +
+    labs(title="Tokens by L1",x='Counts',y = NULL,fill='L1') +
+    theme_classic()+
+    theme(text = element_text(size=20))
+```
+
+- Tokens by L1:
+
+```{r}
+df %>% 
+    count(L1, sort = TRUE) 
+```
+
+- Tasks by L1:
+
+```{r}
+df %>%
+  group_by(Task.title, L1) %>%
+  tally() %>%
+  spread(L1, n)
+```
+
+- Error rates:
+
+```{r}
+count(filter(df,L1 != 'Spanish'),Accuracy)
+```
+- Part of speech:
+
+```{r}
+count(df,POS)
+```
+## Relative frequency
+
+- The figures above, however, can be deceiving as the subsets (by L1) are not equal in size. We'll now do a relative frequency analysis by L1 and by individual participant. We'll start with L1s:
+
+```{r}
+original <- texts_original %>%
+  group_by(L1) %>%
+  summarize(n=n()) %>%
+  rename(Essays = n)
+
+processed <- texts %>%
+  distinct(Filename, .keep_all = TRUE) %>%
+  group_by(L1) %>%
+  summarize(n=n()) %>%
+  rename(Essays.with.diminutive = n)
+```
+
+```{r}
+original %>%
+  full_join(processed,by="L1") %>%
+  mutate(Percent.used = Essays.with.diminutive * 100 / Essays)
+```
+
+- Number of words out of total words that are diminutives:
+
+```{r}
+total_words <- texts %>%
+  group_by(L1) %>%
+  filter(POS != 'SPACE' & POS != 'PUNCT') %>%
+  summarize(n=n()) %>%
+  rename(Words = n)
+
+diminutives <- df %>%
+  group_by(L1) %>%
+  summarize(n=n()) %>%
+  rename(Diminutives = n)
+```
+
+```{r}
+total_words %>%
+  full_join(diminutives,by="L1") %>%
+  mutate(Percent.used = Diminutives * 100 / Words)
+```
+- By learner:
+
+```{r}
+total_words <- texts %>%
+  group_by(Filename) %>%
+  filter(POS != 'SPACE' & POS != 'PUNCT') %>%
+  summarize(n=n()) %>%
+  rename(Words = n)
+
+diminutives <- df %>%
+  group_by(Filename) %>%
+  summarize(n=n()) %>%
+  rename(Diminutives = n)
+```
+
+```{r}
+percent_used <- total_words %>%
+  full_join(diminutives,by="Filename") %>%
+  drop_na() %>% 
+  mutate(Percent.used = Diminutives * 100 / Words) %T>%  print()
+
+#NOTE: Do this same analysis later by learner, so each can have a percentage of diminutives used as an independent variable
+```
+
+- Attaching percetages to main data frame so that they can be used as a variable:
+
+```{r}
+df <- percent_used %>%
+  select(Filename,Percent.used) %>%
+  full_join(df,by="Filename") %T>% print()
+```
+
+# Linear modeling:
+
+## Accuracy
+
+```{r}
+#L1 (including Spanish)
+glm(as.factor(Accuracy) ~ L1, family=binomial,df) %>% summary()
+```
+
+```{r}
+#L1 (excluding Spanish)
+glm(as.factor(Accuracy) ~ L1, family=binomial,filter(df, L1 != 'Spanish')) %>% summary()
+```
+```{r}
+#Proficiency score (excluding Spanish)
+glm(as.factor(Accuracy) ~ Proficiency.score, family=binomial(link = "logit"),filter(df, L1 != 'Spanish')) %>% summary()
+```
+```{r}
+#Proficiency range (excluding Spanish)
+glm(as.factor(Accuracy) ~ Proficiency.range, family=binomial(link = "logit"),filter(df, L1 != 'Spanish')) %>% summary()
+```
+```{r}
+#POS (including Spanish)
+glm(as.factor(Accuracy) ~ POS, family=binomial(link = "logit"),df) %>% summary()
+```
+
+```{r}
+#POS (excluding Spanish)
+glm(as.factor(Accuracy) ~ POS, family=binomial(link = "logit"),filter(df, L1 != 'Spanish')) %>% summary()
+```
+```{r}
+#POS (excluding adverbs)
+glm(as.factor(Accuracy) ~ POS, family=binomial(link = "logit"),filter(df, POS != 'ADV')) %>% summary()
+```
+```{r}
+#POS (excluding adverbs and Spanish L1)
+glm(as.factor(Accuracy) ~ POS, family=binomial(link = "logit"),filter(df, POS != 'ADV' & L1 != 'Spanish')) %>% summary()
+```
+## Percent used
+
+```{r}
+#L1 (including Spanish)
+lm(Percent.used ~ L1, df) %>% summary()
+```
+
+```{r}
+#L1 (excluding Spanish)
+lm(Percent.used ~ L1, filter(df, L1 != 'Spanish')) %>% summary()
+```
+
+```{r}
+#Proficiency score (excluding Spanish)
+lm(Percent.used ~ Proficiency.score,filter(df, L1 != 'Spanish')) %>% summary()
+```
+```{r}
+#Proficiency range (excluding Spanish)
+lm(Percent.used ~ Proficiency.range, filter(df, L1 != 'Spanish')) %>% summary()
+```
+
+```{r}
+#POS (including Spanish)
+lm(Percent.used ~ POS, df) %>% summary()
+```
+
+```{r}
+#POS (excluding Spanish)
+lm(Percent.used ~ POS, filter(df, L1 != 'Spanish')) %>% summary()
+```
+
+```{r}
+#POS (excluding adverbs)
+lm(Percent.used ~ POS, filter(df, POS != 'ADV')) %>% summary()
+```
+
+```{r}
+#POS (excluding adverbs and Spanish L1)
+lm(Percent.used ~ POS, filter(df, POS != 'ADV' & L1 != 'Spanish')) %>% summary()
+```
+```{r}
+write.csv(df, file='data/diminutives_regressions.csv')
+```
+
+# Session info
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,319 @@
+---
+title: "Exploration of CEDEL2 and diminutive formation"
+author: "Juan Berrios"
+date: "6/30/2022"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  html_notebook:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, echo=F}
+knitr::opts_chunk$set(include=TRUE, echo=TRUE, comment=NA)
+```
+
+```{css, echo=F}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+```
+
+# Introduction
+
+- The following is code written for an analysis of diminutive formation in L2 Spanish. The data come from [Corpus Escrito del Español como L2 (CEDEL2)](http://cedel2.learnercorpora.com/). As per the information provided on their website: 
+
+> CEDEL2 currently amounts to a total of 4,399 participants and 1,105,936 words, which makes it one of the largest corpora of its kind.
+>
+> CEDEL2 holds data from learners of Spanish with different L1 backgrounds (where ‘L1’ means the learners’ mother tongue and ‘L2’ their foreign language): L1 English-L2 Spanish, L1 German-L2 Spanish, L1 Dutch-L2 Spanish, L1 French-L2 Spanish, L1 Portuguese-L2 Spanish, L1 Italian-L2 Spanish, L1 Greek-L2 Spanish, L1 Russian--L2 Spanish, L1 Japanese-L2 Spanish, L1 Chinese-L2 Spanish, L1 Arabic-L2 Spanish.
+
+Note that German, Dutch, Italian, French, Russian, Chinese are said to be "under development".
+
+# Preparation
+
+- Loading libraries:
+
+```{r message=FALSE,warning=FALSE}
+library(tidyverse)
+library(tidytext)
+library(magrittr)
+```
+
+- Loading data:
+
+```{r}
+#Note that files are tab separated.
+
+#L2 Spanish
+read.csv("./data/texts.csv", sep = "\t", encoding="UTF-8") -> texts_L2
+
+#L1 Spanish
+read.csv("./data/native/texts.csv", sep = "\t", encoding="UTF-8") -> texts_native
+```
+
+# Exploration
+
+- As the data have different structures depending on corpus subset (learner or native), we will start with learners only. There are 3007 data points (essays) in the data frame. There are 41 variables. Those variables currently are:
+
+```{r}
+texts_L2 %>% 
+  colnames()
+```
+
+- We are going to keep only a limited number of relevant variables for ease of processing. This includes the subcorpus, filename, test score (out of 100 rather than the raw score, so it can be run as a continuous variable), proficiency (ranges based on the scores, and self-reported ranges for all skills and writing specifically), sex, age, L1, task and original text. `Year at university` could also be used as a proxy for proficiency but the format is inconsistent because it was user-entered, so I'm not including it. I excluded `additional foreign language` and related variables for the same reason. `Task number` is included in `Task title`, so that can also be excluded. Keeping `Stay abroad` as a binary variable because the continuous version is also inconsistent and with a very skewed distribution.
+
+```{r}
+texts_L2 <- texts_L2 %>%
+  select(Subcorpus, Filename,Placement.test.score....,Proficiency,Proficiency..self.assessment.,Proficiency..self.assessment..writing,Sex,Age,L1,Years.studying.Spanish,Stay.abroad.in.Spanish.speaking.country.....1.month.,Task.title,Text) %>%
+  rename(Proficiency.score = Placement.test.score...., Proficiency.range = Proficiency, Proficiency.self.assessment = Proficiency..self.assessment., Proficiency.self.assessment.writing = Proficiency..self.assessment..writing, Stay.abroad = Stay.abroad.in.Spanish.speaking.country.....1.month.) 
+
+#Renaming variables
+```
+
+- A sample of the data frame as it currently stands:
+
+```{r}
+texts_L2 %>%
+  head()
+```
+
+- The number of writings by topic (more on the topics on [this website](http://cedel2.learnercorpora.com/user_guide/corpus_design):
+
+```{r}
+#Prompts sorted in decreasing order by number of writings
+
+texts_L2 %>%
+    count(Task.title, sort = TRUE) 
+```
+
+- Data points (writings) sorted by language:
+
+
+```{r}
+##Check
+texts_L2 %>%
+    count(L1, sort = TRUE)
+```
+
+- Let's now turn to the native (L1 Spanish) subset. Once explored, we can merge the two data frames. It currently has 1051 data points and 33 variables. The variables are:
+
+```{r}
+texts_native %>% 
+  colnames()
+```
+
+- Selecting and renaming pertinent variables:
+
+```{r}
+texts_native <- texts_native %>%
+  select(Subcorpus, Filename,Sex,Age,L1,Variety.of.native.language..country.,Task.title,Text) %>%
+  rename(Variety = Variety.of.native.language..country.) 
+```
+
+- Let's check:
+
+```{r}
+texts_native %>%
+  head(5)
+```
+- Refining `Variety` column (so that only the specific country remains):
+
+```{r}
+texts_native <- texts_native %>%
+  mutate(Variety = str_extract(Variety, "\\(.*?\\)")
+)
+```
+
+- Now we can contrast what columns don't match between both subsets:
+
+```{r}
+setdiff(colnames(texts_L2),colnames(texts_native)) #Those in L2 not in native
+
+setdiff(colnames(texts_native),colnames(texts_L2)) #Those in native not in L2
+```
+
+- Merging (variables that don't apply to one subcorpus will be tagged as `NA`:
+
+```{r}
+texts <- texts_L2 %>%
+  full_join(texts_native) 
+
+#Previewig learner subset
+
+texts %>%
+  filter(Subcorpus == 'Learners') %>%
+  head(5)
+
+#Previewing native subset
+
+texts %>%
+  filter(Subcorpus == 'Native') %>%
+  head(5)
+
+#Looks good to go. To save some memory
+
+rm(texts_L2)
+rm(texts_native)
+```
+# Linguistic processing
+
+- Let's first examine the writings as they currently stand:
+
+```{r}
+#First five essays:
+
+texts$Text[1:5]
+```
+
+- The writings appear to be loaded correctly. Accent marks are accurate and there aren't any unusual symbols (other than `/br` lines breaks and `\"` escaped double quotes). The essays also haven't been corrected or spell-checked. I'll remove extraneous spaces before trying to extract tokens:
+
+```{r}
+texts %>%
+  mutate(Text=str_replace_all(Text,"<br/>","")) %>% #Breaks
+  mutate(Text=str_replace_all(Text,"  "," ")) %>% #Double spaces
+  mutate(Text=str_replace_all(Text,"   "," ")) %>% #Triple spaces
+  mutate(Text=str_replace_all(Text,'\"',"")) -> texts #Double quotes
+
+#Note that `str_replace_all` rather than `str_replace` is necessary because otherwise it will only replace the first instance.
+
+#Remaining to fix: periods without separation (e.g., "bonito.vi"). This could be fixed in a later version of this notebook by replacing "/w./w" sequences with "/w. /w". 
+```
+
+- Same texts after processing:
+
+```{r}
+#First five essays:
+
+texts$Text[1:5]
+```
+
+- Now let's match only those data points that have "-ito(a)(s)/-illo(a)(s)" somewhere in the writing:
+
+```{r}
+texts <- texts %>% 
+  filter(str_detect(Text, regex('\\w*i(?:t|ll)(?:o|a)s?\\b'))) %T>% print()
+
+#Regular expression should match all instances.
+```
+
+- 2470 texts in total contain a diminituve or a word form approximating a diminituve. Starting with NLP tasks, we are going to tokenize by sentence before tokenizing by word. Note that I'm not keeping (`drop=TRUE`) the full text as a column because it would unnecesarily make the file too large. The full essays can be consulted in the corresponding directories if need be:
+
+```{r}
+#Tokenizing by sentence
+
+texts <- texts %>%
+  unnest_tokens(Sentence,Text,token="sentences")
+
+#Adding sentence ordering, in case it needs to be added back
+
+texts <- texts %>%
+  group_by(Filename) %>%
+  mutate(Sentence.number = row_number()) %>%
+  ungroup() 
+
+#Adding sentence ordering (in full data frame)
+
+texts <- texts %>%
+  mutate(Sentence.id = as.character(row_number())) #Character so that it matches sPacy formatting later
+```
+
+- Now let's implement some more NLP tasks. We'll tokenize by word and tag them for lemma and POS using Spacy for an easier, more efficient pipeline:
+
+```{r}
+library(spacyr)
+spacy_initialize(model="es_core_news_lg")
+```
+
+
+```{r}
+#Parsing
+
+spacy_parse(texts$Sentence,lemma=TRUE,pos=TRUE,entity=FALSE) -> parsed_texts
+```
+
+```{r}
+#Modifying columns and names so that they match the main data frame
+
+parsed_texts <- parsed_texts %>%
+  select(doc_id,token_id,token,lemma,pos) %>%
+  mutate(doc_id = str_extract(doc_id, "\\d+")) %>%
+  rename(Sentence.id = doc_id)
+```
+
+```{r}
+#Merging data frames
+
+texts <- texts %>%
+  full_join(parsed_texts)
+
+rm(parsed_texts)
+```
+
+- Reordering data filename columns:
+
+```{r}
+texts <- texts %>%
+  select(Subcorpus,Filename,Proficiency.score,Proficiency.range,Proficiency.self.assessment,Proficiency.self.assessment.writing,Sex,Age,L1,Years.studying.Spanish,Stay.abroad,Variety,Task.title,Sentence,Sentence.number,Sentence.id,token_id,token,lemma,pos)
+
+#Check
+
+colnames(texts)
+
+#Looks good
+```
+- Renaming variables for consistency:
+
+```{r}
+texts <- texts %>%
+  rename(Token = token,
+         Token.id = token_id,
+         Lemma = lemma,
+         POS = pos)
+```
+
+- Sampling:
+
+```{r}
+sample_n(texts, 10)
+```
+
+- Let's now filter out only tokens of interests (those matching a diminutive morphological pattern, approximately):
+
+```{r}
+df <- texts %>% 
+  filter(str_detect(Token, regex('\\w*i(?:t|ll)(?:o|a)s?\\b'))) %T>% print()
+```
+
+- And a tag for diminutive form used (*-ito* or *-illo*):
+
+```{r}
+df <- df %>% 
+  mutate(Diminutive = case_when(
+    grepl('\\w*i(?:t)(?:o|a)s?\\b', Token) ~ "ito",
+    grepl('\\w*i(?:ll)(?:o|a)s?\\b', Token) ~ "illo",
+    TRUE ~ NA_character_
+  ), .before=Lemma)
+
+##Check
+count(df, Diminutive) 
+```
+
+- Looks like there are 6,696 tokens after a first attempt. Many of these, however, are not diminutives but rather items that happen to end in the same combination of segments. We will take care of that in a follow-up notebook for efficiency and length.
+
+```{r}
+#Saving the different objects for later analyses:
+write.csv(texts,"data/texts_processed.csv",row.names = FALSE)
+write.csv(df,"data/diminutives.csv",row.names = FALSE)
+```
+
+# Session info
+
+```{r}
+sessionInfo()
+```

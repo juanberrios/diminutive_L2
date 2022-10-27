@@ -1,0 +1,283 @@
+---
+title: "Cleaning and exploratory analysis"
+author: "Juan Berrios"
+date: "6/18/2022"
+output:
+  html_notebook:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, echo=F}
+knitr::opts_chunk$set(include=TRUE, echo=TRUE, comment=NA)
+```
+
+```{css, echo=F}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+```
+
+# Introduction
+
+- The following is code written for an analysis of diminutive formation in L2 Spanish. The data come from [Corpus Escrito del Español como L2 (CEDEL2)](http://cedel2.learnercorpora.com/). It follows a first notebook concentrated on locating and tagging tokens for later analyses. 
+
+# Preparation
+
+- Loading libraries:
+
+```{r message=FALSE,warning=FALSE}
+library(tidyverse)
+library(magrittr)
+```
+
+- Loading data:
+
+```{r}
+#Note that files is tab separated.
+
+read.csv("./data/diminutives.csv") -> df
+read.csv("./data/texts_processed.csv") -> texts
+```
+
+- Checking that everything was loaded properly:
+
+```{r}
+df %>%
+  colnames()
+```
+```{r}
+df %>%
+  head()
+```
+
+```{r}
+df %>%
+  dim()
+```
+
+- Looks like there are 6,696 tokens after a first attempt. Many of these, however, are not diminutives but rather items that happen to end in the same combination of segments. A first attempt to remove non-diminutives is to filter out highly frequent items, which, by virtue of their frequency tend to be more semantically independent (lexicalized). We'll use lemmas to be more efficient (collapsing masc/fem and sing/plural categories):
+
+```{r}
+#Simple frequency distribution for tokens (will sort out some non-diminutives). This list includes those that appear at least twice in the data frame. 
+
+frequent_lemmas <- df %>%
+  count(Lemma, sort = TRUE) %>%
+  filter(n > 2) %>%
+  rownames_to_column()
+```
+
+
+```{r}
+frequent_lemmas
+```
+
+
+```{r}
+#Making  lists based on results
+
+indices <- c(2,4,11,15,20,26,32,33,36,45,50,52,56,58,63,64,69,71,76,82,83,85,87,89,96,102,106,107,109,110,111,113:115,118,120,122,123,126,127,132:135,138,139,142,144,147,149:151,157,158,162,163,165,173:176,178,180:182,187,199:201,204,208,210)
+
+diminutives <- frequent_lemmas$Lemma[indices]
+non_diminutives <- frequent_lemmas$Lemma[-indices]
+```
+
+- List of diminutives kept:
+
+```{r}
+print(diminutives)
+```
+
+- List of non-diminutives removed:
+
+```{r}
+print(non_diminutives)
+```
+
+- Remove non-diminutives from data frame:
+
+```{r}
+df <- df %>% 
+    filter(!Lemma %in% non_diminutives)
+
+#Dimensions
+print("There are this many data points as of now:")
+dim(df)[1]
+print("There are this many unique essays which tokens appear in:")
+length(unique(df$Filename))
+```
+- As a last step we can examine hapax legomena (those that appear only once):
+
+```{r}
+hapax <- df %>%
+  count(Lemma, sort = TRUE) %>%
+  filter(n == 1) %>%
+  rownames_to_column()
+```
+
+- As can be seen below, many appear to be lemmatization/tokenization errors, we'll fix them as appropriate:
+
+```{r}
+hapax
+```
+
+```{r}
+#Making  lists based on results
+
+indices <- c(3,4,7,10,12,15,19,20,21,23,25,30,31,33,36,40,42,44,45,52,53,54,56:60,62:64,66:68,70,71:76,79,80:83,85,86,89,90,91,92,94:99,101:103,105:107,112,116,118,119,121:122,124,126:130,133,135:137,141,143,144,146,150,151,153:155,158,168,171:173,175,176,181:183,188:190,192:197,206,210,211:217,220:222,224:234,236,239,240,242,244:246,248:250,252:256,274,276,277,278,280:283,285,286,287,288,290,292,294,296,297,298:300,302,303,306,307,308,310,311,312,315,317,320,321,323,325,327,329,332,334,335,336,337,338,340,341,342,343,346:348,353,354:359,361,363,364,366,368:370,371:373,376,379,380,381,385,387:389,391,392,393,394,396,401)
+
+diminutives <- hapax$Lemma[indices]
+non_diminutives <- hapax$Lemma[-indices]
+```
+
+- Remove non-diminutives from data frame:
+
+```{r}
+df <- df %>% 
+    filter(!Lemma %in% non_diminutives)
+
+#Dimensions
+print("There are this many data points as of now:")
+dim(df)[1]
+print("There are this many unique essays which tokens appear in:")
+length(unique(df$Filename))
+```
+
+```{r}
+print("There are this many tokens by diminutive used:")
+count(df, Diminutive)
+```
+
+
+# Brief frequency analysis
+
+- To begin examining pattern, we can do a brief frequency analysis:
+
+```{r warning=FALSE}
+#Loading stop words
+
+tibble(Token = quanteda::stopwords("es"),Lexicon = "custom") -> stop_words
+```
+
+- For all tokens accross the data set:
+
+```{r}
+#Simple frequency distribution for tokens
+
+texts %>%
+  filter(POS != 'SPACE' & POS != 'PUNCT') %>% #remove punctuation
+  anti_join(stop_words %>% filter(Lexicon=="custom")) %>% #remove stop words
+  count(Token, sort = TRUE) %>%
+  head(25) #Top 25
+```
+
+- For the diminutive subset only:
+
+```{r}
+#Simple frequency distribution for tokens
+
+df %>%
+  count(Token, sort = TRUE) %>%
+  head(25) #Top 25
+```
+
+- Plotting:
+
+```{r echo=FALSE}
+
+#Function to set size 
+
+psize <- function(width_choice, height_choice) {
+        options(repr.plot.width=width_choice, repr.plot.height=height_choice)
+        }
+```
+
+- All tokens:
+
+```{r echo=FALSE}
+psize(12, 8)
+
+texts %>%
+  filter(POS != 'SPACE' & POS != 'PUNCT') %>% #remove punctuation
+  anti_join(stop_words %>% filter(Lexicon=="custom")) %>% #remove stop words
+  count(Token, sort = TRUE) %>%
+  head(25) %>%
+  mutate(Token = reorder(Token, n)) %>%
+  ggplot(aes(n, Token, fill=Token)) +
+  geom_col(color="black") +
+  labs(title="Frequency Distribution of Tokens",x='Counts',y = NULL,fill='Token') +
+  theme_classic()+
+  theme(text = element_text(size=20))
+
+ggsave("figures/frequency_distribution.png",width = 12, height = 8,dpi=300)
+```
+
+- Diminutives only:
+
+```{r echo=FALSE}
+psize(12, 8)
+
+df %>%
+    count(Token, sort = TRUE) %>%
+    head(25) %>%
+    mutate(Token = reorder(Token, n)) %>%
+    ggplot(aes(n, Token, fill=Token)) +
+    geom_col(color="black") +
+    labs(title="Frequency Distribution of Tokens",x='Counts',y = NULL,fill='Token') +
+    theme_classic()+
+    theme(text = element_text(size=20))
+
+ggsave("figures/frequency_distribution_diminutives.png",width = 12, height = 8,dpi=300)
+```
+
+- Cross linguistic analyses:
+
+```{r}
+df %>%
+    count(L1, sort = TRUE) %>%
+    mutate(L1 = reorder(L1, n)) %>%
+    ggplot(aes(n, L1, fill=L1)) +
+    geom_col(color="black") +
+    labs(title="Tokens by L1",x='Counts',y = NULL,fill='L1') +
+    theme_classic()+
+    theme(text = element_text(size=20))
+```
+
+- Tokens by L1:
+
+```{r}
+df %>% 
+    count(L1, sort = TRUE) 
+```
+
+- Tasks by L1:
+
+```{r}
+df %>%
+  group_by(Task.title, L1) %>%
+  tally() %>%
+  spread(L1, n)
+```
+
+- Saving the different objects for later analyses:
+
+```{r}
+#Data frames
+
+write.csv(df,"data/diminutives_cleaned.csv",row.names = FALSE)
+
+#Lists
+write.table(diminutives, "data/diminutives.txt",sep="\t", row.names=FALSE, col.names = FALSE)
+write.table(non_diminutives, "data/non_diminutives.txt",sep="\t", row.names=FALSE,col.names = FALSE)
+```
+
+
+# Session info
+
+```{r}
+sessionInfo()
+```
